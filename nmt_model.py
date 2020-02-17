@@ -19,6 +19,7 @@ from torch.nn.utils.rnn import pad_packed_sequence, pack_padded_sequence
 from model_embeddings import ModelEmbeddings
 Hypothesis = namedtuple('Hypothesis', ['value', 'score'])
 
+DEBUG = 0
 
 class NMT(nn.Module):
     """ Simple Neural Machine Translation Model:
@@ -169,20 +170,23 @@ class NMT(nn.Module):
         ###     Tensor Permute:
         ###         https://pytorch.org/docs/stable/tensors.html#torch.Tensor.permute
 
+        if DEBUG: print("source_padded (b, src_len) size {}".format(source_padded.size()))
         X = self.model_embeddings.source(source_padded)
+        if DEBUG: print("X (src_len, b, e) size {}".format(X.size()))
         X = pack_padded_sequence(X, source_lengths)
 
-        batch_size = len(source_lengths)
-        #h_0 = torch.zeros(2, batch_size, self.hidden_size)
-        #c_0 = torch.zeros(2, batch_size, self.hidden_size)
         enc_hiddens, (last_hidden, last_cell) = self.encoder(X)
-
         enc_hiddens, _ = pad_packed_sequence(enc_hiddens)
         enc_hiddens = torch.transpose(enc_hiddens, 0, 1)
+        if DEBUG: print("enc_hiddens (b, src_len, h*2) size {}".format(enc_hiddens.size()))
+        if DEBUG: print("last_hidden (2, batch, h) size {}".format(last_hidden.size()))
+        if DEBUG: print("last_cell (2, batch, h) size {}".format(last_cell.size()))
 
-        #init_decoder_hidden = torch.cat((torch.squeeze(last_hidden[0, :, :]), torch.squeeze(last_hidden[0, :, :])), 1)
         init_decoder_hidden = self.h_projection(torch.cat((last_hidden[0, :, :], last_hidden[1, :, :]), 1))
         init_decoder_cell = self.c_projection(torch.cat((last_cell[0, :, :], last_cell[1, :, :]), 1))
+        if DEBUG: print("init_decoder_hidden (batch, h) size {}".format(init_decoder_hidden.size()))
+        if DEBUG: print("init_decoder_cell (batch, h) size {}".format(init_decoder_cell.size()))
+
         dec_init_state = (init_decoder_hidden, init_decoder_cell)
 
         return enc_hiddens, dec_init_state
@@ -251,20 +255,31 @@ class NMT(nn.Module):
         ###         https://pytorch.org/docs/stable/torch.html#torch.cat
         ###     Tensor Stacking:
         ###         https://pytorch.org/docs/stable/torch.html#torch.stack
+
         enc_hiddens_proj = self.att_projection(enc_hiddens)
+        if DEBUG: print("enc_hiddens_proj (batch, src_len, h) size {}".format(enc_hiddens_proj.size()))
 
         Y = self.model_embeddings.target(target_padded)
+        if DEBUG: print("Y (tgt_len, b, h) size {}".format(Y.size()))
 
         for y_t in torch.split(Y, 1, dim=0):
             y_t = torch.squeeze(y_t)
+            if DEBUG: print("y_t (batch, e) size {}".format(y_t.size()))
+
             ybar_t = torch.cat((y_t, o_prev), dim=1)
-            dec_state, combined_output, e_t = \
+            if DEBUG: print("ybar_t (batch, e + h) size {}".format(ybar_t.size()))
+
+            dec_state, o_t, e_t = \
                 self.step(ybar_t, dec_state, enc_hiddens, enc_hiddens_proj, enc_masks)
-            combined_outputs.append(combined_output)
-            o_prev = combined_output
+            if DEBUG: print("o_t (batch, h) size {}".format(o_t.size()))
+
+            combined_outputs.append(o_t)
+            o_prev = o_t
 
         combined_outputs = torch.stack(combined_outputs, 0)
-        ### END YOUR CODE
+        if DEBUG: print("combined_outputs (tgt_len, batch, h) size {}".format(combined_outputs.size()))
+
+    ### END YOUR CODE
 
         return combined_outputs
 
@@ -321,14 +336,16 @@ class NMT(nn.Module):
         ###     Tensor Squeeze:
         ###         https://pytorch.org/docs/stable/torch.html#torch.squeeze
 
-        output, dec_state = self.decoder(torch.unsqueeze(Ybar_t, 0), (torch.unsqueeze(dec_state[0], 0), torch.unsqueeze(dec_state[1], 0)))
+        output, (dec_hidden, dec_cell) = self.decoder(torch.unsqueeze(Ybar_t, 0), (torch.unsqueeze(dec_state[0], 0), torch.unsqueeze(dec_state[1], 0)))
 
-        (dec_hidden, dec_cell) = dec_state
         dec_hidden = dec_hidden.squeeze()
         dec_cell = dec_cell.squeeze()
         dec_state = (dec_hidden, dec_cell)
+        if DEBUG: print("dec_hidden (batch, h) size {}".format(dec_hidden.size()))
+        if DEBUG: print("dec_cell (batch, h) size {}".format(dec_cell.size()))
 
         e_t = torch.bmm(enc_hiddens_proj, dec_hidden.unsqueeze(2)).squeeze()
+        if DEBUG: print("e_t (batch, src_len) size {}".format(e_t.size()))
 
         ### END YOUR CODE
 
@@ -364,16 +381,24 @@ class NMT(nn.Module):
         ###     Tanh:
         ###         https://pytorch.org/docs/stable/torch.html#torch.tanh
 
-        alpha_t = torch.nn.functional.softmax(e_t, 1)
+        alpha_t = torch.nn.functional.softmax(e_t, dim=1)
+        if DEBUG: print("alpha_t (batch, src_len) size {}".format(alpha_t.size()))
+
         a_t = torch.bmm(torch.unsqueeze(alpha_t, 1), enc_hiddens).squeeze()
+        if DEBUG: print("enc_hiddens (batch, src_len, 2*h) size {}".format(enc_hiddens.size()))
+        if DEBUG: print("a_t (batch, 2*h) size {}".format(a_t.size()))
+
         U_t = torch.cat((dec_hidden, a_t), dim=1)
+        if DEBUG: print("U_t (batch, 3*h) size {}".format(U_t.size()))
+
         V_t = self.combined_output_projection(U_t)
+        if DEBUG: print("V_t (batch, h) size {}".format(V_t.size()))
+
         O_t = self.dropout(torch.tanh(V_t))
 
         ### END YOUR CODE
 
-        combined_output = O_t
-        return dec_state, combined_output, e_t
+        return dec_state, O_t, e_t
 
     def generate_sent_masks(self, enc_hiddens: torch.Tensor, source_lengths: List[int]) -> torch.Tensor:
         """ Generate sentence masks for encoder hidden states.
