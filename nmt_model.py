@@ -338,13 +338,14 @@ class NMT(nn.Module):
 
         output, (dec_hidden, dec_cell) = self.decoder(torch.unsqueeze(Ybar_t, 0), (torch.unsqueeze(dec_state[0], 0), torch.unsqueeze(dec_state[1], 0)))
 
-        dec_hidden = dec_hidden.squeeze()
-        dec_cell = dec_cell.squeeze()
+        dec_hidden = dec_hidden.squeeze(dim=0)
+        dec_cell = dec_cell.squeeze(dim=0)
         dec_state = (dec_hidden, dec_cell)
         if DEBUG: print("dec_hidden (batch, h) size {}".format(dec_hidden.size()))
         if DEBUG: print("dec_cell (batch, h) size {}".format(dec_cell.size()))
 
-        e_t = torch.bmm(enc_hiddens_proj, dec_hidden.unsqueeze(2)).squeeze()
+        e_t = torch.bmm(enc_hiddens_proj, dec_hidden.unsqueeze(2))
+        e_t = e_t.squeeze(dim=2)
         if DEBUG: print("e_t (batch, src_len) size {}".format(e_t.size()))
 
         ### END YOUR CODE
@@ -384,7 +385,7 @@ class NMT(nn.Module):
         alpha_t = torch.nn.functional.softmax(e_t, dim=1)
         if DEBUG: print("alpha_t (batch, src_len) size {}".format(alpha_t.size()))
 
-        a_t = torch.bmm(torch.unsqueeze(alpha_t, 1), enc_hiddens).squeeze()
+        a_t = torch.bmm(torch.unsqueeze(alpha_t, 1), enc_hiddens).squeeze(1)
         if DEBUG: print("enc_hiddens (batch, src_len, 2*h) size {}".format(enc_hiddens.size()))
         if DEBUG: print("a_t (batch, 2*h) size {}".format(a_t.size()))
 
